@@ -15,16 +15,18 @@ type Props = {
   /** The browser's transport by default; a test gives one, or one built with the console's interceptors. */
   transport?: Transport | TransportWith;
   checkSession: () => void;
+  /** A same-origin BFF prefix for a federated console page. */
+  baseUrl?: string;
 };
 
-export const BackendProvider: React.FC<Props> = ({ children, transport, checkSession }) => {
+export const BackendProvider: React.FC<Props> = ({ children, transport, checkSession, baseUrl }) => {
   const [client] = useState(() => new QueryClient());
   const used = useMemo(
     () =>
       typeof transport === 'function'
         ? transport([sessionCheck(checkSession)])
-        : (transport ?? createConsoleTransport({ checkSession })),
-    [transport, checkSession],
+        : (transport ?? createConsoleTransport({ checkSession, baseUrl })),
+    [transport, checkSession, baseUrl],
   );
   return (
     <TransportProvider transport={used}>

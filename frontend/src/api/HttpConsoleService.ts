@@ -10,7 +10,10 @@ type Envelope<T> = { data: T };
 type ErrorBody = { error?: { code?: string; message?: string } };
 
 export class HttpConsoleService implements ConsoleService {
-  constructor(private readonly fetchFn: typeof fetch = (...args) => fetch(...args)) {}
+  constructor(
+    private readonly fetchFn: typeof fetch = (...args) => fetch(...args),
+    private readonly apiPrefix = API_PREFIX,
+  ) {}
 
   getUser(): Promise<User> {
     return this.request<User>('GET', '/user');
@@ -56,7 +59,7 @@ export class HttpConsoleService implements ConsoleService {
   async request<T>(method: string, path: string): Promise<T> {
     let response: Response;
     try {
-      response = await this.fetchFn(`${API_PREFIX}${path}`, {
+      response = await this.fetchFn(`${this.apiPrefix}${path}`, {
         method,
         headers: { Accept: 'application/json' },
         credentials: 'same-origin',

@@ -8,31 +8,32 @@ import (
 	"strings"
 )
 
-// assetsPrefix is where Vite writes the bundle. Every file it puts there has a
-// content hash in its name (`index-BPyNsiKc.css`, `RedHatDisplayVF-D7m-OdR-.woff2`:
-// base64url, so not only hex), so a changed file gets a new URL and the old
-// one can be cached for good. The root files (`index.html`, the favicon) keep
-// their names and are revalidated.
+// assetsPrefix and pluginAssetsPrefix are Vite's hashed asset directories.
+// Their files can be cached for good; root files such as index.html, the plugin
+// descriptor and federation entry keep stable names and are revalidated.
 const assetsPrefix = "/assets/"
+const pluginURLPrefix = "/plugins/ai-grid-provider-console/"
+const pluginAssetsPrefix = pluginURLPrefix + "assets/"
 
 // spaHandler serves the built frontend and falls back to index.html for client
 // routes so deep links work.
 type spaHandler struct {
-	dir   string
-	files http.Handler
+	dir        string
+	pluginOnly bool
+	files      http.Handler
 	// policy is the Content-Security-Policy of every file served (pagePolicy).
 	policy string
 }
 
-func newSPAHandler(dir, policy string) http.Handler {
-	return &spaHandler{dir: dir, files: http.FileServer(http.Dir(dir)), policy: policy}
+func newSPAHandler(dir, policy string, pluginOnly bool) http.Handler {
+	return &spaHandler{dir: dir, files: http.FileServer(http.Dir(dir)), policy: policy, pluginOnly: pluginOnly}
 }
 
 // pagePolicy is the Content-Security-Policy of the console's pages, so that
 // markup some component puts into a page (a chart's HTML tooltip, a panel's
 // rendered text) can only be markup: the bundle's own files are the only
 // scripts, with no inline script, inline event handler, javascript: URL or
-// eval; no plugins; no <base> to move the page's relative URLs elsewhere; no
+// eval; no embedded objects; no <base> to move the page's relative URLs elsewhere; no
 // form posting off the console; and no other site framing it. Each directive
 // allows what the built console uses, and nothing it doesn't:
 //
@@ -49,7 +50,7 @@ func newSPAHandler(dir, policy string) http.Handler {
 //     MAP_TILE_URL names one (config.MapTileSource).
 //   - font-src, connect-src 'self': the bundled fonts; the API, the Perses
 //     relay and the Connect relay, all on the console's origin.
-//   - object-src 'none', base-uri 'none': no plugin content, and index.html
+//   - object-src 'none', base-uri 'none': no embedded object content, and index.html
 //     has no <base>.
 //   - form-action 'self': a form submits to the console only.
 //   - frame-ancestors 'none': the console must not be framed, not even by
@@ -92,15 +93,38 @@ func setPageSecurityHeaders(h http.Header, policy string) {
 func (s *spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	clean := path.Clean("/" + r.URL.Path)
 	r.URL.Path = clean // the file server and ServeFile see only the cleaned path
+	isPluginAsset := clean == "/osac-plugin.json" ||
+		clean == "/mf-manifest.json" || strings.HasPrefix(clean, "/plugins/")
+	if s.pluginOnly && !isPluginAsset {
+		http.NotFound(w, r)
+		return
+	}
+	if isPluginAsset {
+		// Federated remotes are ES modules fetched by the OSAC UI from another
+		// origin. These files contain no user data or API responses.
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+	}
 	setPageSecurityHeaders(w.Header(), s.policy)
-	target := filepath.Join(s.dir, filepath.FromSlash(clean))
+	targetPath := strings.TrimPrefix(clean, "/")
+	if s.pluginOnly {
+		// The plugin's public URL is namespaced, but its selected Vite build lives at dist root.
+		if pluginPath, ok := strings.CutPrefix(clean, pluginURLPrefix); ok {
+			targetPath = pluginPath
+			r.URL.Path = "/" + pluginPath
+		}
+	}
+	target := filepath.Join(s.dir, filepath.FromSlash(targetPath))
 	if info, err := os.Stat(target); err == nil && !info.IsDir() {
-		if strings.HasPrefix(clean, assetsPrefix) {
+		if strings.HasPrefix(clean, assetsPrefix) || strings.HasPrefix(clean, pluginAssetsPrefix) {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		} else {
 			w.Header().Set("Cache-Control", "no-cache")
 		}
 		s.files.ServeHTTP(w, r)
+		return
+	}
+	if s.pluginOnly {
+		http.NotFound(w, r)
 		return
 	}
 	if strings.Contains(path.Base(clean), ".") && clean != "/" {

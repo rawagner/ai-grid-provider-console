@@ -6,9 +6,18 @@ clusters, deploy models across sites, manage subscriptions and tenants, and watc
 
 ```
 browser --Connect--> kube-auth-proxy + bff (relay) --> ai-grid-backend --> hub API, Keycloak, Git
+OSAC UI --/api/plugin/<id>/*--> OSAC BFF (token injection) --> BFF :8080 (plugin mode) --> ai-grid-backend
 ```
 
-The BFF serves the static frontend, checks who calls and relays the browser's calls (`docs/bff.md`). Every call to the cluster
+The console also has an optional federated Organizations page for OSAC UI. In plugin mode, browser
+API calls use `/api/plugin/ai-grid-provider-console/*` on the OSAC UI origin; the OSAC BFF adds the
+Keycloak access token and forwards to the AI Grid BFF's in-cluster Service on port 8080. The BFF
+validates the token and requires OSAC's existing `admin` role. Standalone mode uses kube-auth-proxy
+and the hub's `ai-grid-provider-admin` SSAR check
+([chart setup](charts/ai-grid-provider-console/README.md#osac-ui-plugin)).
+
+The standalone BFF serves the static frontend, checks who calls with the hub's SSAR and relays the
+browser's calls (`docs/bff.md`). Every call to the cluster
 goes through [ai-grid-provider-backend](https://github.com/ai-grid-cloud/ai-grid-provider-backend), which runs in
 the same pod. The BFF forwards who is calling, and asks the hub one question itself with
 the caller's own token: may this user `post` to `/ai-grid/provider-console`? That answer is

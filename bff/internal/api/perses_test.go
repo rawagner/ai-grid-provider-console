@@ -188,7 +188,7 @@ func TestPersesAnswerCutAtTheTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	logs := &lockedBuffer{}
-	app := NewApp(testConfig(t), slog.New(slog.NewTextHandler(logs, nil)), backendtest.Start(t, &backendtest.Fake{}), startHub(t, &fakeHub{allowed: true})).WithPerses(relay)
+	app := newAppForTest(t, testConfig(t), slog.New(slog.NewTextHandler(logs, nil)), backendtest.Start(t, &backendtest.Fake{}), startHub(t, &fakeHub{allowed: true})).WithPerses(relay)
 	srv := httptest.NewServer(app.Handler())
 	t.Cleanup(srv.Close) // also after a failure; Close is idempotent
 

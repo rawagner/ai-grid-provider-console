@@ -24,7 +24,7 @@ const (
 	// DefaultBackendAddress is the backend container in the same pod.
 	DefaultBackendAddress = "127.0.0.1:9090"
 	// DefaultBindAddress keeps the BFF off the pod network: only kube-auth-proxy
-	// in the same pod (and the kubelet through it) can reach it.
+	// in the same pod (and the kubelet through it) can reach it in standalone mode.
 	DefaultBindAddress = "127.0.0.1"
 	// DefaultHubCAFile is the API server CA mounted into every pod.
 	DefaultHubCAFile = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
@@ -51,6 +51,13 @@ type Config struct {
 	// CertFile and KeyFile enable TLS when both are set.
 	CertFile string
 	KeyFile  string
+
+	// OIDC settings select plugin mode, which validates OSAC access tokens on
+	// the same listener instead of trusting kube-auth-proxy headers and SSAR.
+	OIDCIssuerURL   string
+	OIDCClientID    string
+	OIDCCAFile      string
+	OIDCTLSInsecure bool
 
 	// Proxy headers carrying the caller's identity.
 	AuthTokenHeader  string
@@ -129,6 +136,10 @@ func Parse(args []string, lookupEnv func(string) (string, bool)) (Config, error)
 	fs.IntVar(&cfg.Port, "port", env.int("port", "PORT", 8080), "Listen port")
 	fs.StringVar(&cfg.CertFile, "cert-file", env.str("CERT_FILE", ""), "TLS certificate file; enables TLS with key-file")
 	fs.StringVar(&cfg.KeyFile, "key-file", env.str("KEY_FILE", ""), "TLS private key file")
+	fs.StringVar(&cfg.OIDCIssuerURL, "oidc-issuer-url", env.str("OIDC_ISSUER_URL", ""), "Keycloak issuer URL for OSAC plugin access tokens")
+	fs.StringVar(&cfg.OIDCClientID, "oidc-client-id", env.str("OIDC_CLIENT_ID", ""), "OSAC UI client ID accepted by the plugin API")
+	fs.StringVar(&cfg.OIDCCAFile, "oidc-ca-file", env.str("OIDC_CA_FILE", ""), "CA bundle for OIDC discovery and JWKS")
+	fs.BoolVar(&cfg.OIDCTLSInsecure, "oidc-tls-insecure", env.boolean("oidc-tls-insecure", "OIDC_TLS_INSECURE", false), "Skip OIDC TLS certificate verification (development only)")
 	fs.StringVar(&cfg.AuthTokenHeader, "auth-token-header", env.str("AUTH_TOKEN_HEADER", DefaultAuthTokenHeader), "Header carrying the caller's bearer token")
 	fs.StringVar(&cfg.AuthTokenPrefix, "auth-token-prefix", env.str("AUTH_TOKEN_PREFIX", ""), "Prefix to strip from the token header value")
 	fs.StringVar(&cfg.AuthUserHeader, "auth-user-header", env.str("AUTH_USER_HEADER", DefaultAuthUserHeader), "Header carrying the caller's user name")
@@ -182,10 +193,16 @@ func Parse(args []string, lookupEnv func(string) (string, bool)) (Config, error)
 	if (cfg.CertFile == "") != (cfg.KeyFile == "") {
 		return Config{}, fmt.Errorf("cert-file and key-file must be set together")
 	}
-	for name, v := range map[string]string{"auth-token-header": cfg.AuthTokenHeader, "auth-user-header": cfg.AuthUserHeader, "backend-address": cfg.BackendAddress, "hub-api-url": cfg.HubAPIURL} {
+	if (strings.TrimSpace(cfg.OIDCIssuerURL) == "") != (strings.TrimSpace(cfg.OIDCClientID) == "") {
+		return Config{}, fmt.Errorf("oidc-issuer-url and oidc-client-id must be set together")
+	}
+	for name, v := range map[string]string{"auth-token-header": cfg.AuthTokenHeader, "auth-user-header": cfg.AuthUserHeader, "backend-address": cfg.BackendAddress} {
 		if strings.TrimSpace(v) == "" {
 			return Config{}, fmt.Errorf("%s must not be empty", name)
 		}
+	}
+	if !cfg.PluginEnabled() && strings.TrimSpace(cfg.HubAPIURL) == "" {
+		return Config{}, fmt.Errorf("hub-api-url must not be empty in standalone mode")
 	}
 	if cfg.PersesURL != "" && strings.TrimSpace(cfg.PersesProject) == "" {
 		return Config{}, fmt.Errorf("perses-project must be set with perses-url: Perses sends the caller's token on to the datasources it queries, so the relay reads one project, whose dashboards and datasources only provider admins may write")
@@ -215,6 +232,11 @@ func (c Config) TLSEnabled() bool { return c.CertFile != "" && c.KeyFile != "" }
 
 // ListenAddr is the address passed to the HTTP server.
 func (c Config) ListenAddr() string { return fmt.Sprintf("%s:%d", c.BindAddress, c.Port) }
+
+// PluginEnabled reports whether OSAC OIDC authentication is configured.
+func (c Config) PluginEnabled() bool {
+	return strings.TrimSpace(c.OIDCIssuerURL) != "" && strings.TrimSpace(c.OIDCClientID) != ""
+}
 
 // inClusterAPIURL mirrors client-go's in-cluster discovery: the kubelet injects
 // KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT into every pod.

@@ -59,6 +59,47 @@ the `open-cluster-management:hypershift-addon:agent` ClusterRoleBinding grants t
 `system:authenticated`, so every OpenShift user was let in. Upgrading leaves out every admin who
 is not a cluster-admin until they are bound to the new role.
 
+## OSAC UI plugin
+
+The console can serve a federated Organizations page inside OSAC UI. The AI Grid Route serves the
+public plugin descriptor and remote JavaScript files through kube-auth-proxy. Setting
+`console.plugin.enabled` switches the BFF's single listener on port 8080 to plugin authentication;
+the chart exposes that port through the Service, not the Route. OSAC UI forwards
+`/api/plugin/ai-grid-provider-console/*` to the Service and adds the signed-in user's Keycloak
+access token. The BFF verifies the token against the configured issuer and allows data access only
+to OSAC `admin` users: group `admins` or realm role
+`cloud-provider-admin`, matching OSAC UI's role mapping. With plugin mode disabled, the same BFF
+listener uses kube-auth-proxy and the `ai-grid-provider-admin` SSAR check described above.
+
+Enable plugin mode with the OSAC UI issuer and client ID (the latter is `osac-ui` by default). If
+the issuer uses a private CA, set a ConfigMap in the release namespace containing its certificate:
+
+```yaml
+console:
+  plugin:
+    enabled: true
+    oidcIssuerUrl: https://keycloak.example.com/realms/osac
+    oidcClientId: osac-ui
+    caBundleConfigMapName: keycloak-ca
+    caBundleKey: ca.crt
+```
+
+Configure the OSAC BFF with the plugin base URL from the AI Grid Route and the Service URL for its
+API upstream. OSAC fetches `osac-plugin.json` and `mf-manifest.json` from that base URL:
+
+```yaml
+plugins:
+  - id: ai-grid-provider-console
+    url: https://ai-grid.example.com/
+    bff:
+      url: http://ai-grid-provider-console.<namespace>.svc:8080
+```
+
+The OSAC UI navigation shows the Organizations entry only to OSAC admins. The plugin contributes
+an OSAC context-provider extension for its session and Connect API contexts; the Organizations page
+consumes those shared contexts without creating its own providers. The page is read-only, and the
+BFF checks the role again for each Organizations request.
+
 ## Images
 
 Each image is `repository:tag`, `repository@digest`, or `repository:tag@digest` when both are set.
@@ -168,7 +209,7 @@ console:
         label: CPU only
         description: For x86_64 clusters without GPUs.
         image: registry.redhat.io/rhaii/vllm-cpu-rhel9@sha256:0ec0f5ff9a5ff263f58db0cfb19e3d7eef24b94c2d8629fe5145f5a8747e28c9
-        imageName: vLLM CPU 0.18.0 (OpenShift AI 3.6)  # shown in the wizard; bump it with the digest
+        imageName: vLLM CPU 0.18.0 (OpenShift AI 3.6) # shown in the wizard; bump it with the digest
         env: { VLLM_CPU_KVCACHE_SPACE: "4", OMP_NUM_THREADS: "4" }
         defaults: { cpu: "4", memory: 8Gi }
 ```

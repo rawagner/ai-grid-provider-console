@@ -17,3 +17,8 @@ spec:
     - name: https
       port: 8443
       targetPort: https
+    {{- if .Values.console.plugin.enabled }}
+    - name: bff
+      port: 8080
+      targetPort: bff
+    {{- end }}

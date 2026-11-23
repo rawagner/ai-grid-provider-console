@@ -5,6 +5,7 @@ go 1.26.3
 require google.golang.org/grpc v1.85.0
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect

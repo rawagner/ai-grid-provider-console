@@ -79,6 +79,28 @@
         "mapTileUrl": { "type": "string" },
         "mapTileAttribution": { "type": "string" },
         "billingUrl": { "type": "string" },
+        "plugin": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "oidcIssuerUrl": { "type": "string" },
+            "oidcClientId": { "type": "string" },
+            "caBundleConfigMapName": { "type": "string" },
+            "caBundleKey": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" }
+          },
+          "allOf": [
+            {
+              "if": { "required": ["enabled"], "properties": { "enabled": { "const": true } } },
+              "then": {
+                "properties": {
+                  "oidcIssuerUrl": { "minLength": 1 },
+                  "oidcClientId": { "minLength": 1 }
+                }
+              }
+            }
+          ]
+        },
         "logLevel": {
           "description": "The BFF's LOG_LEVEL, which it reads in either case.",
           "type": "string",

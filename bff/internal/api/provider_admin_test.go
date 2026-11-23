@@ -96,7 +96,7 @@ func rbacApp(t *testing.T, h *rbacHub) (app *App, backend *backendtest.Fake, con
 	backend = &backendtest.Fake{}
 	connectRelay, connect := connectUpstream(t)
 	persesRelay, perses := persesUpstream(t)
-	app = NewApp(testConfig(t), slog.New(slog.DiscardHandler), backendtest.Start(t, backend), startHub(t, h)).
+	app = newAppForTest(t, testConfig(t), slog.New(slog.DiscardHandler), backendtest.Start(t, backend), startHub(t, h)).
 		WithRelay(connectRelay).WithPerses(persesRelay)
 	return app, backend, connect, perses
 }

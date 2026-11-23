@@ -24,13 +24,13 @@ func wantStatus(t *testing.T, what string, rec *httptest.ResponseRecorder, want 
 func TestReadyzAsksTheHealthService(t *testing.T) {
 	t.Parallel()
 	fake := &backendtest.Fake{}
-	app := NewApp(testConfig(t), slog.New(slog.DiscardHandler), backendtest.Start(t, fake), startHub(t, &fakeHub{allowed: true}))
+	app := newAppForTest(t, testConfig(t), slog.New(slog.DiscardHandler), backendtest.Start(t, fake), startHub(t, &fakeHub{allowed: true}))
 	wantStatus(t, "serving", serve(app, httptest.NewRequest(http.MethodGet, "/readyz", nil)), http.StatusOK)
 	if calls := fake.Calls(); !slices.Equal(calls, []string{"/grpc.health.v1.Health/Check"}) {
 		t.Errorf("calls = %v, want one health check", calls)
 	}
 
 	notServing := &backendtest.Fake{NotServing: true}
-	app = NewApp(testConfig(t), slog.New(slog.DiscardHandler), backendtest.Start(t, notServing), startHub(t, &fakeHub{allowed: true}))
+	app = newAppForTest(t, testConfig(t), slog.New(slog.DiscardHandler), backendtest.Start(t, notServing), startHub(t, &fakeHub{allowed: true}))
 	wantStatus(t, "not serving", serve(app, httptest.NewRequest(http.MethodGet, "/readyz", nil)), http.StatusServiceUnavailable)
 }

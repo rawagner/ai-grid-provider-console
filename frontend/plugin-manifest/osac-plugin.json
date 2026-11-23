@@ -1,0 +1,37 @@
+{
+  "apiVersion": "osac.ui.plugin.v1",
+  "id": "ai-grid-provider-console",
+  "name": "AI grid",
+  "extensions": [
+    {
+      "type": "osac.ui.extension.v1.ContextProvider",
+      "properties": {
+        "component": { "$codeRef": "AIGridContextProvider" }
+      }
+    },
+    {
+      "type": "osac.ui.extension.v1.Route",
+      "properties": {
+        "path": "/extensions/ai-grid/organizations",
+        "component": { "$codeRef": "OrganizationsPage" }
+      }
+    },
+    {
+      "type": "osac.ui.extension.v1.NavigationSection",
+      "properties": {
+        "id": "aigrid",
+        "label": "AI grid"
+      }
+    },
+    {
+      "type": "osac.ui.extension.v1.NavigationLink",
+      "properties": {
+        "id": "organizations",
+        "label": "Organizations",
+        "section": "aigrid",
+        "path": "/extensions/ai-grid/organizations",
+        "allowedRoles": ["admin"]
+      }
+    }
+  ]
+}

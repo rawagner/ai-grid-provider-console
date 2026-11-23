@@ -9,10 +9,12 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/ai-grid-cloud/ai-grid-provider-console/bff/internal/hub"
 	"github.com/ai-grid-cloud/ai-grid-provider-console/bff/internal/identity"
+	oidcvalidator "github.com/ai-grid-cloud/ai-grid-provider-console/bff/internal/oidc"
 	"github.com/ai-grid-cloud/ai-grid-provider-console/bff/internal/perses"
 	"github.com/ai-grid-cloud/ai-grid-provider-console/bff/internal/relay"
 )
@@ -72,6 +74,50 @@ func (a *App) requireProviderAdmin(next http.Handler) http.Handler {
 		default:
 			next.ServeHTTP(w, r)
 		}
+	})
+}
+
+// requireOIDCIdentity validates the bearer token supplied by the OSAC BFF and
+// derives identity claims from the verified access token.
+func (a *App) requireOIDCIdentity(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Fields(r.Header.Get("Authorization"))
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			a.respondError(w, r, Errorf(http.StatusUnauthorized, "a valid OSAC access token is required"))
+			return
+		}
+		principal, err := a.oidc.Validate(r.Context(), parts[1])
+		if err != nil {
+			if errors.Is(err, oidcvalidator.ErrUnavailable) {
+				a.respondError(w, r, Errorf(http.StatusServiceUnavailable, "OSAC identity validation is temporarily unavailable"))
+				return
+			}
+			a.respondError(w, r, Errorf(http.StatusUnauthorized, "the OSAC access token is invalid or expired"))
+			return
+		}
+		id := identity.NewPlugin(parts[1], principal.Username, principal.Email, principal.Groups, principal.IsOSACAdmin)
+		if info, ok := r.Context().Value(requestInfoKey{}).(*requestInfo); ok {
+			info.user = id.Username
+		}
+		next.ServeHTTP(w, r.WithContext(identity.WithIdentity(r.Context(), id)))
+	})
+}
+
+// requireOSACAdmin gates plugin API calls with the same admin-role mapping as
+// OSAC UI. The user and config endpoints remain readable so the page can learn
+// whether to offer admin-only actions.
+func (a *App) requireOSACAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && (r.URL.Path == APIPrefix+"/user" || r.URL.Path == APIPrefix+"/config") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		id, _ := identity.FromContext(r.Context())
+		if !id.ProviderAdmin {
+			a.respondError(w, r, Errorf(http.StatusForbidden, "this console requires the OSAC admin role"))
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

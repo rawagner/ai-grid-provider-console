@@ -314,7 +314,7 @@ func TestAcceptsGzip(t *testing.T) {
 func panicChain(t *testing.T, h http.HandlerFunc) (http.Handler, *lockedBuffer) {
 	t.Helper()
 	logs := &lockedBuffer{}
-	app := NewApp(testConfig(t), slog.New(slog.NewTextHandler(logs, nil)), backendtest.Start(t, &backendtest.Fake{}), startHub(t, &fakeHub{allowed: true}))
+	app := newAppForTest(t, testConfig(t), slog.New(slog.NewTextHandler(logs, nil)), backendtest.Start(t, &backendtest.Fake{}), startHub(t, &fakeHub{allowed: true}))
 	return app.recoverPanic(app.logRequests(compress(h))), logs
 }
 

@@ -22,6 +22,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 
+	"github.com/ai-grid-cloud/ai-grid-provider-console/bff/internal/backend"
 	"github.com/ai-grid-cloud/ai-grid-provider-console/bff/internal/backend/backendtest"
 	"github.com/ai-grid-cloud/ai-grid-provider-console/bff/internal/config"
 	"github.com/ai-grid-cloud/ai-grid-provider-console/bff/internal/hub"
@@ -107,7 +108,16 @@ func newTestAppWithHub(t *testing.T, cfg config.Config, fake *backendtest.Fake, 
 	if fake == nil {
 		fake = &backendtest.Fake{}
 	}
-	return NewApp(cfg, slog.New(slog.DiscardHandler), backendtest.Start(t, fake), startHub(t, h))
+	return newAppForTest(t, cfg, slog.New(slog.DiscardHandler), backendtest.Start(t, fake), startHub(t, h))
+}
+
+func newAppForTest(t *testing.T, cfg config.Config, logger *slog.Logger, client *backend.Client, hubClient *hub.Client) *App {
+	t.Helper()
+	app, err := NewApp(cfg, logger, client, hubClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return app
 }
 
 func decodeError(t *testing.T, rec *httptest.ResponseRecorder) errorBody {
@@ -371,7 +381,7 @@ func TestSlowHubIs502(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := NewApp(testConfig(t), slog.New(slog.DiscardHandler), backendtest.Start(t, &backendtest.Fake{}), hubClient)
+	app := newAppForTest(t, testConfig(t), slog.New(slog.DiscardHandler), backendtest.Start(t, &backendtest.Fake{}), hubClient)
 	for _, path := range []string{"/api/v1/user", "/api/v1/nope"} {
 		rec := serve(app, asUser(http.MethodGet, path))
 		if rec.Code != http.StatusBadGateway {
@@ -389,7 +399,7 @@ func TestSlowHubIs502(t *testing.T) {
 func TestLogsNameTheRequestAndTheUser(t *testing.T) {
 	t.Parallel()
 	var logs bytes.Buffer
-	app := NewApp(testConfig(t), slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})), backendtest.Start(t, &backendtest.Fake{}), startHub(t, &fakeHub{status: http.StatusBadGateway}))
+	app := newAppForTest(t, testConfig(t), slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})), backendtest.Start(t, &backendtest.Fake{}), startHub(t, &fakeHub{status: http.StatusBadGateway}))
 
 	rec := serve(app, asUser(http.MethodGet, "/api/v1/user"))
 	if rec.Code != http.StatusBadGateway {
@@ -428,7 +438,7 @@ func TestSuccessfulProbesLogAtDebug(t *testing.T) {
 	t.Parallel()
 	var logs bytes.Buffer
 	fake := &backendtest.Fake{}
-	app := NewApp(testConfig(t), slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})), backendtest.Start(t, fake), startHub(t, &fakeHub{allowed: true}))
+	app := newAppForTest(t, testConfig(t), slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})), backendtest.Start(t, fake), startHub(t, &fakeHub{allowed: true}))
 	for _, path := range []string{"/readyz", "/healthcheck"} {
 		if rec := serve(app, httptest.NewRequest(http.MethodGet, path, nil)); rec.Code != http.StatusOK {
 			t.Fatalf("%s: %d", path, rec.Code)

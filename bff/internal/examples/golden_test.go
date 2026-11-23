@@ -143,7 +143,11 @@ func newApp(t *testing.T) *api.App {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return api.NewApp(cfg, logger, client, hubClient)
+	app, err := api.NewApp(cfg, logger, client, hubClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return app
 }
 
 // accessReview answers the BFF's provider-admin SelfSubjectAccessReview as a

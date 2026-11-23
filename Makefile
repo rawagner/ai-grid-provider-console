@@ -6,6 +6,8 @@ BACKEND_IMAGE ?=
 TAG ?= dev
 # The hub's architecture, not the build machine's: an Apple-silicon Mac builds linux/amd64 too.
 PLATFORM ?= linux/amd64
+# Build one frontend distribution: standalone (default) or plugin.
+FRONTEND_BUILD ?= standalone
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 CONTAINER_ENGINE ?= $(shell command -v podman 2>/dev/null || command -v docker)
 
@@ -17,6 +19,7 @@ BACKEND_ADDRESS ?= 127.0.0.1:9090
 FAKE_HUB_ADDRESS ?= 127.0.0.1:9091
 BFF_PORT ?= 8080
 FRONTEND_PORT ?= 9000
+OIDC_PLUGIN_MODE := $(if $(and $(strip $(OIDC_ISSUER_URL)),$(strip $(OIDC_CLIENT_ID))),true)
 # Where make dev-cluster forwards the hub's Perses to for the Monitoring page.
 PERSES_ADDRESS ?= 127.0.0.1:9445
 PERSES_NAMESPACE ?= openshift-cluster-observability-operator
@@ -50,7 +53,7 @@ generate-api-into = cd frontend && \
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"} /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } /^[a-zA-Z0-9_-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-##@ Development: the console on http://127.0.0.1:9000, its BFF on :8080 (FRONTEND_PORT, BFF_PORT; docs/dev-setup.md)
+##@ Development: standalone console or plugin assets on :9000 by default (FRONTEND_PORT, BFF_PORT; docs/dev-setup.md)
 
 install: ## Install the frontend's dependencies (once, before the targets below)
 	cd frontend && pnpm install
@@ -114,14 +117,15 @@ dev-bff:
 	$(MAKE) -C bff run PORT=$(BFF_PORT) BACKEND_ADDRESS=$(BACKEND_ADDRESS)
 
 dev-frontend:
-	cd frontend && BFF_URL=http://127.0.0.1:$(BFF_PORT) FRONTEND_PORT=$(FRONTEND_PORT) pnpm dev
+	cd frontend && BFF_URL=http://127.0.0.1:$(BFF_PORT) FRONTEND_PORT=$(FRONTEND_PORT) \
+		$(if $(OIDC_PLUGIN_MODE),pnpm dev:plugin,pnpm dev)
 
 # dev-fake: the backend's own make dev-fake from a checkout at .backend-api-version
 # (.cache/backend/<sha>, or BACKEND_DIR), with its gRPC on BACKEND_ADDRESS and its fake hub on
 # FAKE_HUB_ADDRESS (its other ports, when set: DEV_HTTP_PORT, DEV_KEYCLOAK_PORT, DEV_DRAFT_PORT);
 # the BFF against it, relaying /ai_grid.v1.*, with --fake-backend (the banner, and no login proxy);
-# and the Vite dev server as dev-user with a fixture token (AUTH_TOKEN=viewer-token AUTH_USER=viewer
-# for a user who isn't a provider admin).
+# and either the standalone Vite server as dev-user with a fixture token, or the plugin Vite server
+# when OIDC_ISSUER_URL and OIDC_CLIENT_ID are set.
 dev-fake-backend:
 	@dir="$$(BACKEND_DIR='$(BACKEND_DIR)' BACKEND_REPO='$(BACKEND_REPO)' hack/backend-checkout.sh)" && \
 	MAKEFLAGS= $(MAKE) -C "$$dir" dev-fake \
@@ -133,7 +137,7 @@ dev-bff-fake:
 
 dev-frontend-fake:
 	cd frontend && BFF_URL=http://127.0.0.1:$(BFF_PORT) FRONTEND_PORT=$(FRONTEND_PORT) \
-		AUTH_TOKEN=$${AUTH_TOKEN:-dev-token} AUTH_USER=$${AUTH_USER:-dev-user} pnpm dev
+		$(if $(OIDC_PLUGIN_MODE),pnpm dev:plugin,AUTH_TOKEN=$${AUTH_TOKEN:-dev-token} AUTH_USER=$${AUTH_USER:-dev-user} pnpm dev)
 
 ##@ Checks
 
@@ -163,12 +167,16 @@ chart-test: ## Install the Helm chart into a throwaway kind cluster and check it
 
 ##@ Build and deploy
 
-build: ## Build the BFF binary and the frontend bundle
+build: ## Build the BFF binary and one frontend bundle (FRONTEND_BUILD=standalone|plugin)
 	$(MAKE) -C bff build
-	cd frontend && pnpm build
+	cd frontend && case "$(FRONTEND_BUILD)" in \
+		standalone) pnpm run build ;; \
+		plugin) pnpm run build:plugin ;; \
+		*) echo "FRONTEND_BUILD must be standalone or plugin" >&2; exit 2 ;; \
+	esac
 
 image: ## Build the container image for PLATFORM (default linux/amd64)
-	$(CONTAINER_ENGINE) build --platform $(PLATFORM) --build-arg CONSOLE_VERSION=$(VERSION) -t $(IMAGE):$(TAG) .
+	$(CONTAINER_ENGINE) build --platform $(PLATFORM) --build-arg CONSOLE_VERSION=$(VERSION) --build-arg FRONTEND_BUILD=$(FRONTEND_BUILD) -t $(IMAGE):$(TAG) .
 
 push: ## Push the container image
 	$(CONTAINER_ENGINE) push $(IMAGE):$(TAG)

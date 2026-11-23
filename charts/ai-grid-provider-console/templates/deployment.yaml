@@ -82,9 +82,15 @@ spec:
             - --cookie-samesite=lax
             - --cookie-expire=24h
             - --cookie-refresh=1h
-            # The BFF listens on loopback, so the kubelet probes it through
-            # the proxy. /readyz carries no user data and needs no login.
+            # /readyz carries no user data and needs no login. The Route uses the proxy;
+            # the OSAC BFF calls the same BFF listener directly through the Service.
+            {{- if .Values.console.plugin.enabled }}
+            # The federated descriptor and remote assets are public static files. The OSAC BFF
+            # reaches the Keycloak-authenticated API on the BFF Service port below.
+            - --skip-auth-route=^(/readyz|/osac-plugin\.json|/mf-manifest\.json|/plugins/.*)$
+            {{- else }}
             - --skip-auth-route=^/readyz$
+            {{- end }}
             # The browser's Connect calls to the backend (the BFF relays /ai_grid.v1.*): a call
             # without a valid session is 401, which the Connect client reads as Unauthenticated,
             # not a redirect to the login page, which fetch can't follow.
@@ -131,21 +137,25 @@ spec:
         # The console: a thin BFF plus the built frontend. It relays the
         # frontend's Connect calls to the backend container over loopback,
         # with the caller's identity in the request headers.
-        # It binds to loopback so that nothing on the pod network can reach
-        # it with forged identity headers: every request comes through the
-        # proxy. The only hub call it makes is a SelfSubjectAccessReview with
-        # the caller's token (isProviderAdmin), using the in-cluster API
-        # address and CA that every pod gets.
+        # It has one listener on port 8080. Standalone mode binds to loopback
+        # and uses kube-auth-proxy headers plus SSAR; plugin mode binds to the
+        # pod interface and validates the OSAC Keycloak token and admin role.
         - name: bff
           image: {{ include "console.image" .Values.images.console }}
           {{- with .Values.imagePullPolicy }}
           imagePullPolicy: {{ . }}
           {{- end }}
           args:
-            - --bind-address=127.0.0.1
+            - --bind-address={{ if .Values.console.plugin.enabled }}0.0.0.0{{ else }}127.0.0.1{{ end }}
             - --port=8080
             - --static-assets-dir=/static
             - --backend-address=127.0.0.1:9090
+          {{- if .Values.console.plugin.enabled }}
+          ports:
+            - name: bff
+              containerPort: 8080
+              protocol: TCP
+          {{- end }}
           env:
             - name: GRID_CONSUMER_URL
               value: {{ .Values.console.gridConsumerUrl | quote }}
@@ -157,6 +167,16 @@ spec:
               value: {{ .Values.console.billingUrl | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.console.logLevel | quote }}
+            {{- if .Values.console.plugin.enabled }}
+            - name: OIDC_ISSUER_URL
+              value: {{ required "console.plugin.oidcIssuerUrl is required when console.plugin.enabled" .Values.console.plugin.oidcIssuerUrl | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ required "console.plugin.oidcClientId is required when console.plugin.enabled" .Values.console.plugin.oidcClientId | quote }}
+            {{- if .Values.console.plugin.caBundleConfigMapName }}
+            - name: OIDC_CA_FILE
+              value: /etc/ai-grid/oidc-ca/{{ .Values.console.plugin.caBundleKey }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.console.perses }}
             {{- if .url }}
             # The Monitoring page: the BFF relays /perses/api to this Perses with the caller's token.
@@ -205,6 +225,12 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
+          {{- if and .Values.console.plugin.enabled .Values.console.plugin.caBundleConfigMapName }}
+          volumeMounts:
+            - name: oidc-ca
+              mountPath: /etc/ai-grid/oidc-ca
+              readOnly: true
+          {{- end }}
 
         # ai-grid-backend: owns every call to the hub API, Keycloak and
         # metrics using the pod's ServiceAccount. Its gRPC port and its REST
@@ -293,4 +319,12 @@ spec:
             items:
               - key: token
                 path: token
+        {{- end }}
+        {{- if and .Values.console.plugin.enabled .Values.console.plugin.caBundleConfigMapName }}
+        - name: oidc-ca
+          configMap:
+            name: {{ .Values.console.plugin.caBundleConfigMapName }}
+            items:
+              - key: {{ .Values.console.plugin.caBundleKey }}
+                path: {{ .Values.console.plugin.caBundleKey }}
         {{- end }}

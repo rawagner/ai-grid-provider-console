@@ -1,10 +1,8 @@
-// Package identity reads who is calling from the headers set by the login proxy.
+// Package identity holds the caller identity for standalone and plugin requests.
 //
-// In a cluster, kube-auth-proxy runs in front of the BFF and sets the user's
-// name, groups and OpenShift access token on every request. Locally the Vite
-// dev proxy sets the same headers from `oc whoami`. The BFF does not verify
-// these headers itself: it is only reachable through the proxy, and the
-// backend enforces authorization with the forwarded token.
+// Standalone requests use headers set by kube-auth-proxy (or the local Vite
+// dev proxy from `oc whoami`). Plugin requests use claims from a validated
+// OSAC Keycloak access token.
 package identity
 
 import (
@@ -14,13 +12,25 @@ import (
 	"strings"
 )
 
-// Identity is what the proxy told the BFF about the caller.
+// Identity is the authenticated caller and the token forwarded to the backend.
 type Identity struct {
 	Username string
 	Email    string
 	Groups   []string
-	token    string
+	// ProviderAdmin is the authorization result attached by the authenticator.
+	// Standalone callers still derive it from SSAR; plugin callers derive it
+	// from the validated OSAC role claims.
+	ProviderAdmin bool
+	authMode      authMode
+	token         string
 }
+
+type authMode uint8
+
+const (
+	standaloneMode authMode = iota
+	pluginMode
+)
 
 // Token returns the caller's bearer token, forwarded to the backend.
 func (i Identity) Token() string { return i.token }
@@ -60,10 +70,27 @@ func (h Headers) Extract(header http.Header) (Identity, error) {
 		Username: strings.TrimSpace(header.Get(h.User)),
 		Email:    strings.TrimSpace(header.Get(h.Email)),
 		Groups:   splitGroups(header.Values(h.Groups)),
+		authMode: standaloneMode,
 		token:    raw,
 	}
 	return id, nil
 }
+
+// NewPlugin constructs the identity for the federated OSAC UI path from
+// claims that have already been validated by the OIDC verifier.
+func NewPlugin(token, username, email string, groups []string, isOSACAdmin bool) Identity {
+	return Identity{
+		Username:      username,
+		Email:         email,
+		Groups:        append([]string(nil), groups...),
+		ProviderAdmin: isOSACAdmin,
+		authMode:      pluginMode,
+		token:         token,
+	}
+}
+
+// IsPlugin reports whether this identity came from a validated OIDC plugin request.
+func (i Identity) IsPlugin() bool { return i.authMode == pluginMode }
 
 // splitGroups accepts repeated headers and comma-separated values.
 func splitGroups(values []string) []string {

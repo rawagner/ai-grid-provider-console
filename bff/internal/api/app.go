@@ -2,6 +2,8 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -9,6 +11,7 @@ import (
 	"github.com/ai-grid-cloud/ai-grid-provider-console/bff/internal/config"
 	"github.com/ai-grid-cloud/ai-grid-provider-console/bff/internal/hub"
 	"github.com/ai-grid-cloud/ai-grid-provider-console/bff/internal/identity"
+	"github.com/ai-grid-cloud/ai-grid-provider-console/bff/internal/oidc"
 	"github.com/ai-grid-cloud/ai-grid-provider-console/bff/internal/perses"
 	"github.com/ai-grid-cloud/ai-grid-provider-console/bff/internal/relay"
 )
@@ -25,21 +28,25 @@ type App struct {
 	logger  *slog.Logger
 	backend *backend.Client
 	// hub answers the provider-admin access review with the caller's token.
-	hub     *hub.Client
-	headers identity.Headers
+	hub *hub.Client
+	// oidc validates access tokens when this BFF runs in plugin mode.
+	oidc     *oidc.Validator
+	isPlugin bool
+	headers  identity.Headers
 	// perses relays the Monitoring page to the hub's Perses; nil when it is off.
 	perses *perses.Relay
 	// connect relays the browser's Connect calls to the backend's own RPCs; nil when it is off.
 	connect *relay.Relay
 }
 
-// NewApp assembles the application.
-func NewApp(cfg config.Config, logger *slog.Logger, client *backend.Client, hubClient *hub.Client) *App {
-	return &App{
-		cfg:     cfg,
-		logger:  logger,
-		backend: client,
-		hub:     hubClient,
+// NewApp assembles the application and configures OIDC validation in plugin mode.
+func NewApp(cfg config.Config, logger *slog.Logger, client *backend.Client, hubClient *hub.Client) (*App, error) {
+	app := &App{
+		cfg:      cfg,
+		logger:   logger,
+		backend:  client,
+		hub:      hubClient,
+		isPlugin: cfg.PluginEnabled(),
 		headers: identity.Headers{
 			User:        cfg.AuthUserHeader,
 			Email:       cfg.AuthEmailHeader,
@@ -48,6 +55,19 @@ func NewApp(cfg config.Config, logger *slog.Logger, client *backend.Client, hubC
 			TokenPrefix: cfg.AuthTokenPrefix,
 		},
 	}
+	if app.isPlugin {
+		validator, err := oidc.New(context.Background(), oidc.Config{
+			IssuerURL: cfg.OIDCIssuerURL,
+			ClientID:  cfg.OIDCClientID,
+			CAFile:    cfg.OIDCCAFile,
+			Insecure:  cfg.OIDCTLSInsecure,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("configure plugin authentication: %w", err)
+		}
+		app.oidc = validator
+	}
+	return app, nil
 }
 
 // WithPerses turns on the Monitoring page's relay to the hub's Perses.
@@ -62,28 +82,45 @@ func (a *App) WithRelay(r *relay.Relay) *App {
 	return a
 }
 
-// Handler returns the root HTTP handler.
+// Handler selects the auth middleware and static files for the BFF's single listener.
 func (a *App) Handler() http.Handler {
+	authenticate := a.requireIdentity
+	authorize := a.requireProviderAdmin
+	includePerses := true
+	var assets http.Handler
+	if a.isPlugin {
+		authenticate = a.requireOIDCIdentity
+		authorize = a.requireOSACAdmin
+		includePerses = false
+	}
+	if a.cfg.StaticAssetsDir != "" {
+		// config.Parse refuses a tile URL without a source; a Config built
+		// otherwise gets a map without its tiles, not a wider policy.
+		tiles, _ := config.MapTileSource(a.cfg.MapTileURL)
+		assets = newSPAHandler(a.cfg.StaticAssetsDir, pagePolicy(tiles), a.isPlugin)
+	}
+	return a.handler(authenticate, authorize, assets, includePerses)
+}
+
+// handler wires routes shared by both auth modes.
+func (a *App) handler(authenticate, authorize func(http.Handler) http.Handler, assets http.Handler, includePerses bool) http.Handler {
 	api := http.NewServeMux()
 	a.registerRoutes(api)
 
 	root := http.NewServeMux()
 	root.HandleFunc("GET /healthcheck", a.healthcheck)
 	root.HandleFunc("GET /readyz", a.readyz)
-	root.Handle(APIPrefix+"/", a.requireIdentity(a.requireProviderAdmin(api)))
-	// The Monitoring page's Perses calls: the same caller checks as the API, then the relay.
-	root.Handle(perses.Prefix+"/", a.requireIdentity(a.requireProviderAdmin(http.HandlerFunc(a.relayPerses))))
-	if a.cfg.StaticAssetsDir != "" {
-		// config.Parse refuses a tile URL without a source; a Config built
-		// otherwise gets a map without its tiles, not a wider policy.
-		tiles, _ := config.MapTileSource(a.cfg.MapTileURL)
-		root.Handle("/", newSPAHandler(a.cfg.StaticAssetsDir, pagePolicy(tiles)))
+	root.Handle(APIPrefix+"/", authenticate(authorize(api)))
+	if includePerses {
+		// The Monitoring page's Perses calls use the same caller checks as the API.
+		root.Handle(perses.Prefix+"/", authenticate(authorize(http.HandlerFunc(a.relayPerses))))
+	}
+	if assets != nil {
+		root.Handle("/", assets)
 	}
 
-	// The backend's own RPCs over Connect: the same caller checks as the API, then the relay.
-	// Routed before the mux, which has no pattern for a path prefix without a slash
-	// (/ai_grid.v1.Clusters/List) and would redirect an unclean path instead of refusing it.
-	connect := a.requireIdentity(a.requireProviderAdmin(http.HandlerFunc(a.relayConnect)))
+	// Connect paths have no trailing slash, so route them before ServeMux.
+	connect := authenticate(authorize(http.HandlerFunc(a.relayConnect)))
 	routes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if relay.Handles(r.URL.Path) {
 			connect.ServeHTTP(w, r)
@@ -91,7 +128,6 @@ func (a *App) Handler() http.Handler {
 		}
 		root.ServeHTTP(w, r)
 	})
-
 	return a.recoverPanic(a.logRequests(compress(routes)))
 }
 

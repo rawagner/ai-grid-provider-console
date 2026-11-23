@@ -53,9 +53,14 @@ func run() error {
 	}
 	defer func() { _ = client.Close() }()
 
-	hubClient, err := hub.New(hub.Config{URL: cfg.HubAPIURL, CAFile: cfg.HubCAFile})
-	if err != nil {
-		return err
+	var hubClient *hub.Client
+	hubURL := "off"
+	if !cfg.PluginEnabled() {
+		hubClient, err = hub.New(hub.Config{URL: cfg.HubAPIURL, CAFile: cfg.HubCAFile})
+		if err != nil {
+			return err
+		}
+		hubURL = hubClient.URL()
 	}
 
 	// The browser's Connect calls to the backend's own RPCs, on the same address as the gRPC client.
@@ -68,7 +73,11 @@ func run() error {
 		return err
 	}
 
-	app := api.NewApp(cfg, logger, client, hubClient).WithRelay(connectRelay)
+	app, err := api.NewApp(cfg, logger, client, hubClient)
+	if err != nil {
+		return err
+	}
+	app.WithRelay(connectRelay)
 	persesURL := "off"
 	if cfg.PersesURL != "" {
 		persesRelay, err := perses.New(perses.Config{
@@ -86,6 +95,10 @@ func run() error {
 		app.WithPerses(persesRelay)
 		persesURL = persesRelay.URL()
 	}
+	authMode := "standalone-proxy-headers+ssar"
+	if cfg.PluginEnabled() {
+		authMode = "osac-oidc+admin-role"
+	}
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr(),
 		Handler:           app.Handler(),
@@ -98,7 +111,7 @@ func run() error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("starting server", "addr", srv.Addr, "tls", cfg.TLSEnabled(), "version", api.Version, "backend", cfg.BackendAddress, "connectRelay", connectRelay.URL(), "backendTLS", cfg.BackendCAFile != "", "hub", hubClient.URL(), "perses", persesURL)
+		logger.Info("starting server", "addr", srv.Addr, "tls", cfg.TLSEnabled(), "authMode", authMode, "version", api.Version, "backend", cfg.BackendAddress, "connectRelay", connectRelay.URL(), "backendTLS", cfg.BackendCAFile != "", "hub", hubURL, "perses", persesURL)
 		var serveErr error
 		if cfg.TLSEnabled() {
 			serveErr = srv.ListenAndServeTLS(cfg.CertFile, cfg.KeyFile)

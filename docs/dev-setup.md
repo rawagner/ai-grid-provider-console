@@ -2,11 +2,14 @@
 
 Three processes: the backend ([ai-grid-provider-backend](https://github.com/ai-grid-cloud/ai-grid-provider-backend),
 Connect and gRPC, talks to the hub, Keycloak and Git), the BFF (relays the browser's calls to the
-backend, `docs/bff.md`) and the Vite dev server (serves the frontend, proxies `/api`,
-`/ai_grid.v1.*` and `/perses/api` to the BFF). The BFF and the frontend run from this repository;
-the backend runs where it lives: deployed on the hub, from its own repository in a second
-terminal, or, without a cluster, fetched at `.backend-api-version` and run on its own fakes. The console runs as the user who ran `oc login`: the dev proxy
-sends your name and token the way kube-auth-proxy would, and the BFF forwards them to the backend.
+backend, `docs/bff.md`) and the Vite dev server. In standalone mode Vite serves the console and
+proxies `/api`, `/ai_grid.v1.*` and `/perses/api` to the BFF. When `OIDC_ISSUER_URL` and
+`OIDC_CLIENT_ID` are set, Vite serves the OSAC plugin's federated assets instead. The BFF and the
+frontend run from this repository; the backend runs where it lives: deployed on the hub, from its
+own repository in a second terminal, or, without a cluster, fetched at `.backend-api-version` and
+run on its own fakes. In standalone mode the console runs as the user who ran `oc login`: the dev
+proxy sends your name and token the way kube-auth-proxy would, and the BFF forwards them to the
+backend.
 
 ## Which command
 
@@ -130,12 +133,18 @@ checks the read-only endpoints and lists clusters and organizations through the 
 
 ```sh
 make install     # once: frontend dependencies
-make dev-fake    # the backend at .backend-api-version on its fake hub and Keycloak, BFF :8080, frontend :9000
+make dev-fake    # the backend at .backend-api-version on its fake hub and Keycloak, BFF :8080
 ```
 
-No `oc login` is needed. Open http://127.0.0.1:9000. You're signed in as `dev-user`, a provider
-admin; set `AUTH_TOKEN=viewer-token AUTH_USER=viewer` to see the console as a user who isn't one,
-and `AUTH_TOKEN=expired-token` for a token the hub rejects.
+No `oc login` is needed. Without OIDC settings, open http://127.0.0.1:9000. You're signed in as
+`dev-user`, a provider admin; set `AUTH_TOKEN=viewer-token AUTH_USER=viewer` to see the console as
+a user who isn't one, and `AUTH_TOKEN=expired-token` for a token the hub rejects.
+
+With `OIDC_ISSUER_URL` and `OIDC_CLIENT_ID` set, `make dev-fake` starts the plugin Vite config on
+`FRONTEND_PORT` (default `9000`) instead of the standalone console. Use the local
+OSAC UI plugin configuration in `frontend/plugins.ai-grid.dev.yaml` to load those assets; the
+plugin URL must match `FRONTEND_PORT` and its BFF URL must match `BFF_PORT`. The browser should be on
+the OSAC UI, which forwards authenticated plugin API requests to the local BFF.
 
 This runs the real `ai-grid-provider-backend`, at the commit in `.backend-api-version`, on the
 fake hub and Keycloak of its own repository (its `make dev-fake`: gRPC, Connect and gRPC-Web on
@@ -148,7 +157,8 @@ organizations; Models and Subscriptions are commits to a local Git catalog
 needs a Perses (`make dev-cluster`), so it isn't available here. The browser tests run the same
 backend on its PoC fixtures, on ports of their own (`frontend/playwright.config.ts` starts it
 through `hack/backend-fakes.sh`).
-The Vite dev server forwards `/ai_grid.v1.*` to the BFF as it does `/api`, in every mode.
+In standalone mode, Vite forwards `/ai_grid.v1.*` to the BFF as it does `/api`. In plugin mode,
+the OSAC UI BFF forwards the authenticated plugin API requests to the local BFF.
 
 The backend is fetched once into `.cache/backend/<sha>` (gitignored; `hack/backend-checkout.sh`),
 the commit only, and built there with Go. To run your own checkout instead, set `BACKEND_DIR`
@@ -162,8 +172,8 @@ another process holds a default port:
 
 | Variable | Default | What listens there |
 |---|---|---|
-| `FRONTEND_PORT` | `9000` | the Vite dev server |
-| `BFF_PORT` | `8080` | the BFF; the Vite dev server proxies to it |
+| `FRONTEND_PORT` | `9000` | the Vite dev server in standalone or OIDC plugin mode |
+| `BFF_PORT` | `8080` | the BFF; standalone Vite proxies to it, or the OSAC UI BFF forwards plugin requests to it |
 | `BACKEND_ADDRESS` | `127.0.0.1:9090` | the backend's gRPC and Connect: forwarded from the hub, yours, or on its fakes |
 | `FAKE_HUB_ADDRESS` | `127.0.0.1:9091` | the backend's fake hub, which answers the access review (`make dev-fake`) |
 | `PERSES_ADDRESS` | `127.0.0.1:9445` | the hub's Perses, forwarded (`make dev-cluster`) |
@@ -195,13 +205,17 @@ are not in `make help`:
 
 ## BFF settings
 
-Environment variables the BFF reads: `HUB_API_URL` (required outside a pod; in a pod it
-defaults to the in-cluster API server), `HUB_CA_FILE`, `BIND_ADDRESS` (default `127.0.0.1`;
-`0.0.0.0` exposes the BFF without a proxy in front), `PORT`, `BACKEND_ADDRESS`,
+Environment variables the BFF reads: `HUB_API_URL` (required in standalone mode outside a pod; in a
+pod it defaults to the in-cluster API server), `HUB_CA_FILE`, `BIND_ADDRESS` (default
+`127.0.0.1`; plugin mode in the chart binds to `0.0.0.0` for the in-cluster Service), `PORT`,
+`BACKEND_ADDRESS`,
 `BACKEND_CA_FILE`, `BACKEND_SERVER_NAME`, `BACKEND_INSECURE`, `BACKEND_TIMEOUT` (10s, at most 50s),
 `BACKEND_WRITE_TIMEOUT` (30s, at most 50s: a write procedure on the Connect relay, `docs/bff.md`),
 `PERSES_URL`, `PERSES_CA_FILE`, `PERSES_SERVER_NAME`, `PERSES_INSECURE`, `PERSES_TIMEOUT`,
 `PERSES_PROJECT` (the Perses relay, `docs/bff.md`),
+`OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CA_FILE` and `OIDC_TLS_INSECURE` (set the first two to
+select OSAC plugin mode on the same listener, `docs/bff.md`; the insecure flag skips certificate
+verification for local development only),
 `AUTH_TOKEN_HEADER`, `AUTH_USER_HEADER`, `AUTH_EMAIL_HEADER`, `AUTH_GROUPS_HEADER`,
 `GRID_CONSUMER_URL`, `MAP_TILE_URL`, `MAP_TILE_ATTRIBUTION`, `BILLING_URL`, `LOG_LEVEL`, `AUTH_TOKEN_PREFIX`,
 `FAKE_BACKEND` (the backend runs on
@@ -213,7 +227,8 @@ in `bff/` for the flags.
 ```sh
 make lint    # go vet, golangci-lint; ESLint, Prettier check, tsc (fix formatting with: cd frontend && pnpm format); make check-generated-api
 make test    # go test -race (in-memory gRPC backend and stub hub), vitest
-make build   # BFF binary and frontend bundle
+make build   # BFF binary and standalone frontend bundle (default)
+make build FRONTEND_BUILD=plugin  # BFF binary and OSAC plugin bundle
 make e2e     # Playwright on the production bundle (vite build, then vite preview with the dev proxy) against the backend at .backend-api-version on its fakes, PoC fixtures, and a BFF of its own (frontend/playwright.config.ts)
 ```
 
@@ -283,6 +298,8 @@ backend this console was generated against. Set it only for a backend you built 
 
 ```sh
 make image IMAGE=quay.io/<you>/ai-grid-provider-console TAG=dev
+# Build a plugin-mode image instead; deploy it with console.plugin.enabled=true.
+make image IMAGE=quay.io/<you>/ai-grid-provider-console TAG=dev FRONTEND_BUILD=plugin
 make push  IMAGE=quay.io/<you>/ai-grid-provider-console TAG=dev
 # build the backend image from its repository: podman build -f Containerfile -t quay.io/<you>/ai-grid-provider-backend:dev . && podman push ...
 KEYCLOAK_URL=https://<keycloak-route-host> KEYCLOAK_ADMIN_USERNAME=... KEYCLOAK_ADMIN_PASSWORD=... \

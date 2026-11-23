@@ -81,6 +81,16 @@ console:
   mapTileAttribution: ""
   billingUrl: ""
   logLevel: info
+  # Selects plugin mode on the BFF's 8080 listener: validate OSAC Keycloak access tokens and use
+  # the OSAC admin role instead of kube-auth-proxy headers and SSAR. The Service exposes this
+  # listener to the OSAC BFF; the Route still serves public plugin assets through kube-auth-proxy.
+  plugin:
+    enabled: false
+    oidcIssuerUrl: ""
+    oidcClientId: ""
+    # Optional ConfigMap containing the CA certificate for a private Keycloak issuer.
+    caBundleConfigMapName: ""
+    caBundleKey: ca.crt
   # The Monitoring page's Perses (docs/bff.md, "The Perses relay"): its dashboard-*-admin
   # dashboards are the page's tabs. Empty url: Monitoring says it is not set up and names these.
   perses:

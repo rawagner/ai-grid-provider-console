@@ -10,6 +10,7 @@
 # cross-compiles to TARGETOS/TARGETARCH, so an arm64 Mac builds an amd64 image without emulation.
 
 FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi9/nodejs-22:1793903487@sha256:18efae02a19cdfbda303ff98d096cfcc2e123f300aff146e7dab1e75b9116dec AS frontend-builder
+ARG FRONTEND_BUILD=standalone
 WORKDIR /opt/app-root/src/frontend
 RUN npm install -g pnpm@11.22.0
 COPY --chown=1001:0 frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
@@ -17,7 +18,11 @@ COPY --chown=1001:0 frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-
 COPY --chown=1001:0 frontend/patches/ ./patches/
 RUN pnpm install --frozen-lockfile
 COPY --chown=1001:0 frontend/ ./
-RUN pnpm run build
+RUN case "$FRONTEND_BUILD" in \
+    standalone) pnpm run build ;; \
+    plugin) pnpm run build:plugin ;; \
+    *) echo "FRONTEND_BUILD must be standalone or plugin" >&2; exit 2 ;; \
+  esac
 
 FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi9/go-toolset:1794208304@sha256:0e3894cea4fc077084245e8aa2befc8a7d91a4f60fbf850f0b5b555cbe62ee26 AS bff-builder
 ARG TARGETOS

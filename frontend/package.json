@@ -8,7 +8,9 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:plugin": "vite --config vite.plugin.config.ts --host 127.0.0.1",
     "build": "tsc --noEmit -p tsconfig.build.json && vite build",
+    "build:plugin": "tsc --noEmit -p tsconfig.build.json && vite build --config vite.plugin.config.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "e2e": "playwright test",
@@ -69,6 +71,8 @@
     "@bufbuild/protoc-gen-es": "2.16.0",
     "@connectrpc/protoc-gen-connect-query": "2.3.1",
     "@eslint/js": "^10.0.1",
+    "@module-federation/runtime": "2.9.3",
+    "@module-federation/vite": "^1.24.1",
     "@playwright/test": "1.64.1",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^7.0.1",
